@@ -1,4 +1,4 @@
-# 🧠 MAMA-MIA Challenge: Breast Tumor Segmentation on DCE-MRI
+# 🧠 MAMA-MIA Challenge: Fair Breast Tumor Segmentation on DCE-MRI
 
 We are Team AIH-MAMA from *AI4Health@EURECOM* and *Politecnico di Torino, Italy*.
 
