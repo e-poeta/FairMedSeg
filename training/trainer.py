@@ -2,8 +2,12 @@ import os
 import torch
 from tqdm import tqdm
 import wandb
+import numpy as np
+import pandas as pd
 from monai.utils import set_determinism
 from monai.metrics import DiceMetric
+from monai.losses import DiceCELoss, HausdorffDTLoss, DiceFocalLoss
+from metrics.challenge_scores import compute_performance_score, compute_fairness_ranking_score
 import torchio as tio 
 
 class Trainer:
@@ -20,12 +24,19 @@ class Trainer:
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.loss_function = loss_function
+        self.wandb_run = wandb_run
         self.config = config
         self.device = config["device"]
-        self.val_interval = config.get("val_interval", 1)
+        self.use_divloss = config["divloss"]
         self.optimizer = torch.optim.Adam(model.parameters(), lr=config.get("learning_rate", 1e-4))
         self.dice_metric = DiceMetric(include_background=False, reduction="mean")
-        self.wandb_run = wandb_run
+        self.train_metadata_weights = None
+        self.train_metadata = pd.DataFrame()  # Initialize an empty DataFrame for training metadata
+        #self.dice_loss = DiceCELoss(to_onehot_y=True,softmax=True)
+        self.dice_loss = DiceFocalLoss(to_onehot_y=True,softmax=True,)
+        self.hd_loss = HausdorffDTLoss(
+            to_onehot_y=True,softmax=True
+        )
 
         # Reproducibility
         set_determinism(seed=config.get("seed", 42))
@@ -34,7 +45,6 @@ class Trainer:
         self.save_dir = config.get("save_dir", "outputs/checkpoints")
         os.makedirs(self.save_dir, exist_ok=True)
 
-        self.start_epoch = 1
         self.best_dice = 0.0
         if "resume" in config and config["resume"]:
             checkpoint = torch.load(config["resume"], map_location=self.device, weights_only=True)
@@ -44,9 +54,10 @@ class Trainer:
             self.best_dice = checkpoint.get("val_dice", 0.0)
             print(f"Resumed training from epoch {self.start_epoch - 1} with best val dice {self.best_dice:.4f}")
 
-    def _step(self, batch, training=True):
-        images = batch["image"].to(self.device).float() #batch["image"][tio.DATA].to(self.device).float()
-        labels = batch["label"].to(self.device).long()  # o .float() si tu loss lo requiere#batch["label"][tio.DATA].to(self.device).long()
+    def _step(self, batch, batch_idx, training=True):
+        images = batch["image"].to(self.device).float() 
+        labels = batch["label"].to(self.device).long() 
+
         if training:
             self.optimizer.zero_grad()
             outputs = self.model(images)
@@ -178,7 +189,17 @@ class Trainer:
                     "val_dice": dice_score,                    
                 })    
         return dice_score
-  
+    
+    # def _update_weights(self):
+    #     performance_name = 'performance_score'  # name of the performance score in metadata
+    #     performance_scores, val_metadata = self.loss_function.compute_performance_score(model=self.model, val_loader=self.val_loader)
+    #     val_metadata[performance_name] = performance_scores
+
+    #     self.train_metadata['weights'] = 1.0
+    #     weights = self.loss_function.finding_subgroups_weights(val_metadata=val_metadata, train_metadata=self.train_metadata)
+
+    #     self.train_metadata_weights = weights
+
     def _update_weights(self):
         performance_name = 'performance_score'
 
